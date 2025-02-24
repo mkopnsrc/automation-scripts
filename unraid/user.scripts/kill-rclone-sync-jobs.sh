@@ -1,4 +1,4 @@
-!/bin/sh
+#!/bin/sh
 
 : <<'#HEADER_COMMENTS'
 ScriptName: kill-rclone-sync-jobs.sh

@@ -1,4 +1,4 @@
-!/bin/sh                                                                                                                                                         
+#!/bin/sh                                                                                                                                                         
 : <<'#HEADER_COMMENTS'
 ScriptName: unraid-flash-backup.sh
 Created: 2025-02-23
