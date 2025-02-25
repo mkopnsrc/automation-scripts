@@ -4,7 +4,7 @@
 ScriptName: unraid-flash-backup.sh
 Created: 2025-02-23
 Updated: 2025-02-25
-Version: 20250225.2
+Version: 20250225.3
 Author: mkopnsrc
 
 Description: This script automates the backup of an unRAID server's flash drive, moves the backup to a specified directory,
@@ -23,8 +23,26 @@ Usage: Save this script to a file (e.g., flash_backup.sh), make it executable wi
 #HEADER_COMMENTS
 
 :<<'#SCRIPT_VERSION_HISTORY'
+20250225.3
+==========
+    - Shortened notifications:
+      - Reduced all notification messages to be short (<20 chars where possible) and meaningful.
+      - Removed file paths from notifications to fit unRAID's limited notification window (e.g., "Backup in progress...", "Removed old backups.").
+
+    - Added console debug logging:
+      - Introduced ENABLE_DEBUG config option (default: true) to toggle detailed console output.
+      - Modified notify() to accept a debug_msg parameter for verbose logging.
+      - Added timestamped console logs with severity and full details (e.g., paths) when ENABLE_DEBUG is true.
+
+    - Updated notification calls:
+      - Each notify() call now provides a short message for unRAID and a detailed debug message for console.
+
+    - Miscellaneous:
+      - Simplified notify() logic by moving non-executable script warning to console debug output.
+      - No functional changes to backup logic, only notification and logging enhancements.
+      
 20250225.2
-========
+==========
     - Fixed symlink timing issue:
       - Replaced static $MYDATE-based filename prediction with dynamic find command using pattern '${SERVER_NAME}-v${OS_VERSION}-flash-backup-*.zip'.
       - Added 5-second retry loop with 1-second delays to locate symlink in $TEMP_DIR, ensuring it’s found even if backup completion spans a minute boundary.
@@ -78,6 +96,8 @@ BACKUP_DIR="/mnt/user/backup/unraid/_flash/"
 BACKUPS_TO_KEEP=10  # Number of most recent backups to retain
 ENABLE_ALERTS=true  # Set to false to disable all notifications
 ALERT_SEVERITIES="normal warning alert"  # Space-separated list of severities to show (options: normal, warning, alert)
+ENABLE_DEBUG=true  # Set to true to enable detailed console logging
+
 
 # (DO NOT CHANGE) unRaid Built-in scripts and Paths
 FLASH_BACKUP_SCRIPT="/usr/local/emhttp/webGui/scripts/flash_backup"
@@ -87,91 +107,92 @@ TEMP_DIR="/usr/local/emhttp/"
 # Notification function
 notify() {
     local severity="$1"
-    local message="$2"
+    local short_msg="$2"
+    local debug_msg="$3"
     local subject="Flash Backup Status"
     local event="FlashBackup"
 
-    # If alerts are disabled, output to console only
+    # Log detailed message to console if debug is enabled
+    [ "$ENABLE_DEBUG" = true ] && echo "$(date '+%Y-%m-%d %H:%M:%S') [$severity] $debug_msg"
+
+    # If alerts are disabled, skip notification
     if [ "$ENABLE_ALERTS" = false ]; then
-        echo "$message"
         return
     fi
 
     # Check if the severity is in the ALERT_SEVERITIES list
     if ! echo "$ALERT_SEVERITIES" | grep -qw "$severity"; then
-        echo "$message"  # Output to console if severity is filtered out
         return
     fi
 
     if [ -x "$NOTIFY_SCRIPT" ]; then
-        "$NOTIFY_SCRIPT" -e "$event" -s "$subject" -d "$message" -i "$severity"
+        "$NOTIFY_SCRIPT" -e "$event" -s "$subject" -d "$short_msg" -i "$severity"
     else
-        echo "Warning: Notification script not found or not executable. Message: $message"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [warning] Notification script not executable: $debug_msg"
     fi
 }
 
 # Check if mountpoint command is available
 if ! command -v mountpoint >/dev/null 2>&1; then
-    notify "alert" "Required 'mountpoint' command not found. Please install it (e.g., via unRAID Nerd Tools)."
+    notify "alert" "Missing mountpoint command." "Required 'mountpoint' command not found. Please install it."
     exit 1
 fi
 
 # Check if BACKUP_DIR exists and determine if it's a mount or local path
 if [ ! -d "$BACKUP_DIR" ]; then
-    notify "alert" "Backup directory '$BACKUP_DIR' does not exist and will not be created automatically."
+    notify "alert" "Backup directory missing." "Backup directory '$BACKUP_DIR' does not exist and will not be created."
     exit 1
 else
     if mountpoint -q "$BACKUP_DIR"; then
-        notify "normal" "Backup directory '$BACKUP_DIR' is a mount point. Verifying accessibility..."
+        notify "normal" "Checking mount..." "Checking accessibility of mount point '$BACKUP_DIR'..."
         if ! df "$BACKUP_DIR" >/dev/null 2>&1; then
-            notify "alert" "Backup directory '$BACKUP_DIR' is a mount but not accessible (possibly unmounted or stale). Script cannot proceed."
+            notify "alert" "Mount not accessible." "Mount '$BACKUP_DIR' is not accessible (possibly unmounted or stale)."
             exit 1
         fi
-        notify "normal" "Mount point '$BACKUP_DIR' is accessible."
+        notify "normal" "Mount path accessible." "Mount point '$BACKUP_DIR' is accessible."
     else
-        notify "normal" "Backup directory '$BACKUP_DIR' is a local path."
+        notify "normal" "Using local path." "Backup directory '$BACKUP_DIR' is a local path."
     fi
 fi
 
 # Check if backup directory is writable
 if [ ! -w "$BACKUP_DIR" ]; then
-    notify "alert" "Backup directory '$BACKUP_DIR' is not writable. Check permissions."
+    notify "alert" "Directory not writable." "Backup directory '$BACKUP_DIR' is not writable. Check permissions."
     exit 1
 fi
 
 # Step 1: Delete old backups (keep last X backups)
-notify "normal" "Cleaning up backups, keeping the last $BACKUPS_TO_KEEP..."
+notify "normal" "Cleaning up backups..." "Cleaning up backups in '$BACKUP_DIR', keeping the last $BACKUPS_TO_KEEP..."
 TOTAL_BACKUPS=$(find "$BACKUP_DIR" -type f -name '*-flash-backup-*.zip' | wc -l)
 if [ "$TOTAL_BACKUPS" -gt "$BACKUPS_TO_KEEP" ]; then
-    # Capture the list of files to remove and execute removal
     mapfile -t FILES_TO_REMOVE < <(find "$BACKUP_DIR" -type f -name '*-flash-backup-*.zip' -print0 | sort -z -r | tail -z -n +$((BACKUPS_TO_KEEP + 1)) | tr '\0' '\n')
     if [ ${#FILES_TO_REMOVE[@]} -gt 0 ]; then
         if rm -fv "${FILES_TO_REMOVE[@]}" >/dev/null 2>&1; then
-            notify "normal" "Successfully removed ${#FILES_TO_REMOVE[@]} excess backups."
+            notify "normal" "Removed old backups." "Successfully removed ${#FILES_TO_REMOVE[@]} excess backups from '$BACKUP_DIR'."
         else
-            notify "warning" "Failed to delete some old backups. Check permissions or files."
+            notify "warning" "Cleanup failed." "Failed to delete some old backups in '$BACKUP_DIR'. Check permissions."
         fi
     else
-        notify "warning" "No excess backups identified for removal, despite total exceeding limit."
+        notify "warning" "No cleanup needed." "No excess backups identified in '$BACKUP_DIR', despite total exceeding limit."
     fi
 else
-    notify "normal" "No excess backups to remove. Total found: $TOTAL_BACKUPS."
+    notify "normal" "No cleanup needed." "No excess backups to remove in '$BACKUP_DIR'. Total found: $TOTAL_BACKUPS."
 fi
 
 # Step 2: Execute native unRAID flash backup script
-notify "warning" "Flash backup is in progress..."
+notify "warning" "Backup in progress..." "Executing flash backup script '$FLASH_BACKUP_SCRIPT'..."
 if [ ! -x "$FLASH_BACKUP_SCRIPT" ]; then
-    notify "alert" "Flash backup script '$FLASH_BACKUP_SCRIPT' not found or not executable."
+    notify "alert" "Script not found." "Flash backup script '$FLASH_BACKUP_SCRIPT' not found or not executable."
     exit 1
 fi
 
 if ! "$FLASH_BACKUP_SCRIPT"; then
-    notify "alert" "Flash backup script failed to execute."
+    notify "alert" "Backup failed." "Flash backup script '$FLASH_BACKUP_SCRIPT' failed to execute."
     exit 1
 fi
 
 # Step 3: Locate and handle the symlink
-notify "normal" "Flash backup completed. Locating symlink in '$TEMP_DIR'..."
+notify "normal" "Locating backup symlink..." "Flash backup completed. Locating symlink in '$TEMP_DIR'..."
 
 # Get server name and OS version for pattern matching
 SERVER_NAME=$(hostname | tr '[:upper:]' '[:lower:]' | tr ' ' '_')  # Default to 'tower' if not set
@@ -185,37 +206,37 @@ for i in {1..5}; do  # Retry up to 5 times with 1-second delay
     if [ -n "$SYMLINK_PATH" ]; then
         break
     fi
-    notify "normal" "Symlink not yet found. Waiting 1 second (attempt $i/5)..."
+    notify "normal" "Retrying symlink..." "Symlink not found in '$TEMP_DIR'. Waiting 1 second (attempt $i/5)..."
     sleep 1
 done
 
 # Check if symlink was found
 if [ -n "$SYMLINK_PATH" ]; then
-    notify "normal" "Symlink found: '$SYMLINK_PATH'."
+    notify "normal" "Symlink found." "Symlink located: '$SYMLINK_PATH'."
     ORIGINAL_FILE=$(readlink -f "$SYMLINK_PATH")
     if [ -z "$ORIGINAL_FILE" ] || [ ! -f "$ORIGINAL_FILE" ]; then
-        notify "alert" "Symlink '$SYMLINK_PATH' exists but points to an invalid or missing file."
+        notify "alert" "Symlink invalid." "Symlink '$SYMLINK_PATH' points to an invalid or missing file."
         exit 1
     fi
 else
-    notify "alert" "No symlink matching '${SERVER_NAME}-v${OS_VERSION}-flash-backup-*.zip' found in '$TEMP_DIR' after backup."
+    notify "alert" "Flash Backup symlink missing." "No symlink matching '${SERVER_NAME}-v${OS_VERSION}-flash-backup-*.zip' found in '$TEMP_DIR'."
     exit 1
 fi
 
 # Step 4: Move the original file and remove the symlink
-notify "normal" "Flash backup completed. Moving backup file from '$ORIGINAL_FILE' to '$BACKUP_DIR'..."
+notify "normal" "Moving backup..." "Moving backup file to '$BACKUP_DIR'..."
 if ! mv "$ORIGINAL_FILE" "$BACKUP_DIR"; then
-    notify "alert" "Failed to move backup file to '$BACKUP_DIR'. Check permissions or disk space."
+    notify "alert" "Move failed." "Failed to move backup file to '$BACKUP_DIR'. Check permissions or disk space."
     exit 1
 fi
 
-notify "normal" "Removing symlink '$SYMLINK_PATH'..."
+notify "normal" "Removing symlink..." "Removing symlink '$SYMLINK_PATH'..."
 if ! rm -f "$SYMLINK_PATH"; then
-    notify "warning" "Failed to remove symlink '$SYMLINK_PATH'. Proceeding anyway..."
+    notify "warning" "Symlink not removed." "Failed to remove symlink '$SYMLINK_PATH'."
 fi
 
 # Step 5: Notify completion
-notify "normal" "Flash backup completed successfully."
-notify "normal" "All done!"
+notify "normal" "Flash Backup complete." "Flash backup completed successfully."
+notify "normal" "All done!" "Backup process finished."
 
 exit 0
