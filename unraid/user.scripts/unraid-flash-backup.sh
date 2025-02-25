@@ -4,7 +4,7 @@
 ScriptName: unraid-flash-backup.sh
 Created: 2025-02-23
 Updated: 2025-02-25
-Version: 20250225.3
+Version: 20250225.4
 Author: mkopnsrc
 
 Description: This script automates the backup of an unRAID server's flash drive, moves the backup to a specified directory,
@@ -23,6 +23,13 @@ Usage: Save this script to a file (e.g., flash_backup.sh), make it executable wi
 #HEADER_COMMENTS
 
 :<<'#SCRIPT_VERSION_HISTORY'
+20250225.4
+==========
+    - Minor changes
+      - Added space in unraid alert event name
+      - Added '-e' to console debug echo
+      - Removed notifications for accessible backup_dir
+
 20250225.3
 ==========
     - Shortened notifications:
@@ -110,10 +117,10 @@ notify() {
     local short_msg="$2"
     local debug_msg="$3"
     local subject="Flash Backup Status"
-    local event="FlashBackup"
+    local event="Flash Backup"
 
     # Log detailed message to console if debug is enabled
-    [ "$ENABLE_DEBUG" = true ] && echo "$(date '+%Y-%m-%d %H:%M:%S') [$severity] $debug_msg"
+    [ "$ENABLE_DEBUG" = true ] && echo -e "$(date '+%Y-%m-%d %H:%M:%S') [$severity] $debug_msg"
 
     # If alerts are disabled, skip notification
     if [ "$ENABLE_ALERTS" = false ]; then
@@ -127,6 +134,7 @@ notify() {
 
     if [ -x "$NOTIFY_SCRIPT" ]; then
         "$NOTIFY_SCRIPT" -e "$event" -s "$subject" -d "$short_msg" -i "$severity"
+        sleep 1s
     else
         echo "$(date '+%Y-%m-%d %H:%M:%S') [warning] Notification script not executable: $debug_msg"
     fi
@@ -149,9 +157,6 @@ else
             notify "alert" "Mount not accessible." "Mount '$BACKUP_DIR' is not accessible (possibly unmounted or stale)."
             exit 1
         fi
-        notify "normal" "Mount path accessible." "Mount point '$BACKUP_DIR' is accessible."
-    else
-        notify "normal" "Using local path." "Backup directory '$BACKUP_DIR' is a local path."
     fi
 fi
 
